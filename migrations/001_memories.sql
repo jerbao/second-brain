@@ -25,7 +25,7 @@ CREATE TABLE memories (
             'reflection', 'knowledge', 'task'
         )
     ),
-    embedding       VECTOR(1536) NOT NULL,  -- dimension fixed to match EMBEDDING_DIMENSIONS=1536 (see 012-settings.md)
+    embedding       VECTOR(1536) NOT NULL,  -- dimension fixed to match EMBEDDING_DIMENSIONS=1536
     namespace       VARCHAR(64) NOT NULL DEFAULT 'personal',
     tier            VARCHAR(10) DEFAULT 'HOT' CHECK (tier IN ('HOT', 'WARM', 'COLD')),
     confidence      FLOAT NOT NULL DEFAULT 0.7,
