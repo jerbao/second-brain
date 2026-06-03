@@ -11,8 +11,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Init script: creates the `pii` database on first startup (decision 2026-06-03).
+      # Script is idempotent via DO $$ ... EXCEPTION ... END $$ (see 006-init-scripts.md).
+      - ./init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d brain && pg_isready -U postgres -d pii"]
       interval: 10s
       timeout: 5s
 
@@ -21,9 +24,13 @@ services:
     ports:
       - "8000:8000"
     env_file:
+      # Single source of truth for configuration (decision 2026-06-03).
+      # The .env file already comes with docker-aware defaults (DB_HOST=postgres,
+      # the docker-compose service name). Users only override if running the API
+      # OUTSIDE docker (e.g., `uv run uvicorn` on the host machine) — in that
+      # case, they edit .env and change DB_HOST to "localhost". No `environment:`
+      # override here because that would be redundant.
       - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/brain
     depends_on:
       postgres:
         condition: service_healthy
