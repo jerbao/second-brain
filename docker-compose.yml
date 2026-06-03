@@ -1,2 +1,35 @@
-# TODO: docker compose stack
-services: {}
+version: '3.9'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18-trixie
+    environment:
+      POSTGRES_DB: brain
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/brain
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./vault-mirror:/app/vault-mirror
+      - ./backups:/app/backups
+
+volumes:
+  postgres_data:
