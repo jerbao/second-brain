@@ -10,15 +10,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 RUN pip install uv
 
-# Copy only pyproject.toml first (cache layer)
+# Copy dependency files first to leverage Docker layer cache
 COPY pyproject.toml uv.lock* ./
 RUN uv sync --frozen --no-install-project
 
-# Copy source code
+# Copy application source
 COPY . .
 
-# Generate Fernet key on first run if missing
-RUN python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > /tmp/fernet_key 2>/dev/null || true
+# FERNET_KEY is supplied at runtime via the .env file (see .env.example).
+# It is NOT generated here on purpose: a key baked into the image is a leaked
+# secret, and a freshly generated key per build would invalidate data encrypted
+# by the previous build. Users generate their own key once with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 EXPOSE 8000
 
