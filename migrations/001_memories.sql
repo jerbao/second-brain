@@ -6,14 +6,18 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- PostgreSQL 18 provides a native uuidv7() function, so we do NOT need
 -- the uuid-ossp extension here. v7 yields time-ordered UUIDs (sortable
 -- by creation time, good for keyset pagination and B-tree locality).
--- (Decision 2026-06-03: prefer PG-native v7 over the external pg_uuidv7
--- extension to avoid an extra dependency.)
 
--- ENUM type for evidence_kind
-CREATE TYPE evidence_kind AS ENUM ('direct', 'inferred', 'manual', 'system');
+-- ENUM type for evidence_kind. CREATE TYPE has no IF NOT EXISTS in PG,
+-- so we wrap it in a DO block that swallows the duplicate_object error
+-- the second time the migration runs.
+DO $$ BEGIN
+    CREATE TYPE evidence_kind AS ENUM ('direct', 'inferred', 'manual', 'system');
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE 'type evidence_kind already exists, skipping';
+END $$;
 
 -- Main table: memories
-CREATE TABLE memories (
+CREATE TABLE IF NOT EXISTS memories (
     id              UUID PRIMARY KEY DEFAULT uuidv7(),
     content         TEXT NOT NULL,
     metadata        JSONB NOT NULL DEFAULT '{}',
@@ -45,7 +49,7 @@ CREATE TABLE memories (
 -- later, add a per-namespace partial index or include namespace as a
 -- leading column on the index. lists=100 is a sensible default for the
 -- expected row scale; revisit if the table grows past ~1M rows.
-CREATE INDEX idx_memories_namespace_embedding ON memories
+CREATE INDEX IF NOT EXISTS idx_memories_namespace_embedding ON memories
     USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100)
     WHERE dismissed = false;
@@ -53,5 +57,34 @@ CREATE INDEX idx_memories_namespace_embedding ON memories
 -- GIN index for multilingual full-text / BM25 search. The 'simple'
 -- tokenizer is language-agnostic and supports Portuguese/English/etc.
 -- without per-language configuration.
-CREATE INDEX idx_memories_content_gin ON memories
+CREATE INDEX IF NOT EXISTS idx_memories_content_gin ON memories
     USING GIN (to_tsvector('simple', content));
+
+-- ── Trigger: auto-bump updated_at on UPDATE ──
+-- CREATE OR REPLACE is idempotent, so whichever
+-- migration runs second just no-ops the function body.
+--
+-- This makes 001 self-contained: apply 001 alone → function exists,
+-- trigger attaches, memories has its auto-bump.
+CREATE OR REPLACE FUNCTION trigger_set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'set_memories_updated_at'
+          AND tgrelid = 'memories'::regclass
+    ) THEN
+        CREATE TRIGGER set_memories_updated_at
+            BEFORE UPDATE ON memories
+            FOR EACH ROW
+            EXECUTE FUNCTION trigger_set_updated_at();
+    END IF;
+END
+$$;
